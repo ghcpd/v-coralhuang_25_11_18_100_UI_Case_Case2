@@ -1,0 +1,105 @@
+You are a web developer working inside a persistent code execution session.
+Your task is to **debug a broken UI plugin** based on the provided buggy Python file `input.py` (do not modify this file in place; treat it as read-only and create a separate fixed file, for example `fixed_plugin.py`).
+You must **set up a reproducible environment**, **run tests locally**, **fix all issues**, and provide **one-click scripts and a Dockerfile** for testing.
+
+## **Buggy Source**
+
+* The file **`input.py`** is an intentionally broken Stable Diffusion WebUI-style script implementing an **“SD upscale”** plugin (Gradio + SD WebUI APIs).
+* It contains at least the following UI / integration bugs:
+* **Parameter order mismatch between `ui()` and `run()`**: `ui()` returns the components as `[info, upscaler_index, overlap, scale_factor]`, but `run(p, _, overlap, upscaler_index, scale_factor)` assumes `[info, overlap, upscaler_index, scale_factor]`. As a result, at runtime:
+  * `overlap` actually receives the value from the “Upscaler” Radio.
+  * `upscaler_index` actually receives the numeric value from the “Tile overlap” slider.
+* **Upscaler Radio type mismatch and missing type guard**:
+  * In `ui()`, the “Upscaler” `Radio` no longer uses `type="index"`, so it returns a **string** (the upscaler name).
+  * In `run()`, the defensive `isinstance(upscaler_index, str)` check has been removed.
+  * The code still does `upscaler = shared.sd_upscalers[upscaler_index]`, treating this value as a list index, which can cause type errors or out-of-range access.
+* **Inconsistent scale factor behavior when the upscaler is `"None"`**:
+  * When `upscaler.name != "None"`, the code uses the SD upscaler’s `scaler.upscale` with `scale_factor`.
+  * When `upscaler.name == "None"`, it still resizes the image using `Image.resize` and `scale_factor` with `NEAREST` resampling.
+  * This contradicts the expected behavior that choosing `"None"` should disable SD-based upscaling and avoid unexpected resizing.
+* **Missing validation for tile overlap vs tile size**:
+  * The `overlap` slider allows values up to 256 with no validation against `p.width` and `p.height`.
+  * Users can select combinations where overlap is greater than or equal to the tile dimensions, which may lead to pathological behavior or errors when `images.split_grid` is called.
+* Your job is to **inspect `input.py`**, understand these bugs, and produce a **new corrected script file** without changing `input.py`.
+
+## **Workspace**
+
+* Work in the current project directory.
+* Ignore any `.git` contents.
+* Treat this as a **Python code + tests project** (no framework assumptions beyond Python and basic tools).
+
+## **Requirements**
+
+* Do **not** edit `input.py` directly; create a new fixed file (for example `fixed_plugin.py`).
+* Create a **reproducible environment** for running and testing the plugin.
+* Provide the following files in the project root:
+  * `setup.sh` – install all required dependencies (Python packages, tools, etc.).
+  * `run.sh` – start any necessary local server or minimal harness to exercise the plugin (only if you need one).
+  * `test.sh` – run automated tests that validate the behavior of the fixed plugin.
+  * `Dockerfile` – build a container image that:
+    * Installs dependencies (you may call `setup.sh` inside the Docker build or entrypoint).
+    * Copies project files into the image.
+    * Defines a default `CMD` or `ENTRYPOINT` that runs `./test.sh` so that `docker run` executes the full test suite.
+* Tests must:
+  * **Execute for real** (no mocked or fabricated output).
+  * **Fail** when the known bugs are present.
+  * **Pass** after your fixes are applied.
+
+## **Implementation Method**
+
+* **Understand & plan**:
+  * Read `input.py` and summarize the bugs and their impact.
+  * Plan how to refactor or wrap the code into a fixed version without editing `input.py`.
+* **Implement incrementally**:
+  * Create the fixed script file and gradually address:
+    * The parameter order mismatch between `ui()` and `run()`.
+    * The upscaler Radio type mismatch and missing type guard.
+    * The inconsistent scale factor behavior when `"None"` is selected.
+    * The lack of overlap vs tile-size validation.
+  * Keep changes small and testable.
+* **Run & verify**:
+  * Use `run.sh` to launch your harness or server if needed.
+  * Use `test.sh` to run your test suite.
+  * Build and run the Docker image to ensure tests pass inside the container as well.
+  * Fix any runtime errors or failing tests until everything passes.
+
+## **Deliverables**
+
+* A **new fixed Python script file** (for example `fixed_plugin.py`) that:
+  * Correctly handles UI values and types.
+  * Uses a consistent and correct parameter mapping between `ui()` and `run()`.
+  * Behaves sensibly when the upscaler is `"None"` (no surprising scaling).
+  * Validates or safely handles tile overlap relative to tile size.
+* A **list of edits / design decisions** explaining:
+  * How each original bug in `input.py` was identified.
+  * How each bug is fixed in the new file.
+* `setup.sh` to prepare the environment.
+* `run.sh` to launch any required local process or server.
+* `test.sh` to run automated tests against the fixed plugin.
+* `Dockerfile` that allows another user to run `docker build` and `docker run` to execute the tests end-to-end.
+* Short **instructions** describing:
+  * How to run `./setup.sh`.
+  * How to run `./run.sh` (if needed).
+  * How to run `./test.sh` and interpret the results.
+  * How to build and run the Docker image to execute the tests inside a container.
+
+## **Testing & Optional Server Rules**
+
+* If you need an HTTP endpoint or static page, you may use a simple Python server, for example:
+  * `nohup python3 -m http.server 3000 > /tmp/html_server.log 2>&1 &`
+* Verify with:
+  * `curl -I http://localhost:3000`
+* Ensure tests in `test.sh` and the Docker container actually call into your fixed script and assert behavior (no “echo success” style fakes).
+
+## **UI/UX Expectations**
+
+* The plugin should:
+  * Not raise exceptions in valid usage flows.
+  * Correctly respect user selections for upscale method, overlap, and scale factor.
+  * Handle invalid or extreme inputs gracefully (error message, clamping, or safe defaults).
+
+## **Final Note**
+
+* You **must run all tests** via `test.sh` (and via the Docker image).
+* You **must not fabricate** test results.
+* The environment, scripts, and Dockerfile must be **reusable**: another user should be able to run `./setup.sh`, `./run.sh` (if needed), `./test.sh`, and also build and run the Docker image to verify your solution end-to-end.
